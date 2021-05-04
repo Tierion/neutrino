@@ -14,6 +14,8 @@ import (
 
 	"github.com/btcsuite/btcd/addrmgr"
 	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/btcjson"
+	"github.com/btcsuite/btcutil/bloom"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/connmgr"
@@ -53,7 +55,7 @@ var (
 
 	// RequiredServices describes the services that are required to be
 	// supported by outbound peers.
-	RequiredServices = wire.SFNodeNetwork | wire.SFNodeWitness | wire.SFNodeCF
+	RequiredServices = wire.SFNodeNetwork | wire.SFNodeWitness | wire.SFNodeCF | wire.SFNodeBloom
 
 	// BanThreshold is the maximum ban score before a peer is banned.
 	BanThreshold = uint32(100)
@@ -272,7 +274,8 @@ func (sp *ServerPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 	// so we can find compatible peers.
 	peerServices := sp.Services()
 	if peerServices&wire.SFNodeWitness != wire.SFNodeWitness ||
-		peerServices&wire.SFNodeCF != wire.SFNodeCF {
+		peerServices&wire.SFNodeCF != wire.SFNodeCF ||
+	    peerServices&wire.SFNodeBloom != wire.SFNodeBloom {
 
 		peerAddr := sp.Addr()
 		err := sp.server.BanPeer(peerAddr, banman.NoCompactFilters)
@@ -295,6 +298,13 @@ func (sp *ServerPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) *wire.MsgRej
 	// connecting to discovered peers.
 	if !sp.Inbound() {
 		sp.server.addrManager.SetServices(sp.NA(), msg.Services)
+	}
+
+	// If we are not in blocks only mode then send a match all bloom filter to
+	// the remote peer.
+	if !sp.server.blocksOnly {
+		filter := bloom.NewFilter(0, 0, 1, wire.BloomUpdateNone)
+		sp.QueueMessage(filter.MsgFilterLoad(), nil)
 	}
 
 	return nil
@@ -329,6 +339,17 @@ func (sp *ServerPeer) OnInv(p *peer.Peer, msg *wire.MsgInv) {
 	if len(newInv.InvList) > 0 {
 		sp.server.blockManager.QueueInv(newInv, sp)
 	}
+}
+
+// OnTx is invoked when a peer sends us a new transaction. We will will pass it
+// into the blockmanager for further processing.
+func (sp *ServerPeer) OnTx(p *peer.Peer, msg *wire.MsgTx) {
+	if sp.server.blocksOnly {
+		log.Tracef("Ignoring tx %v from %v - blocksonly enabled",
+			msg.TxHash(), sp)
+		return
+	}
+	sp.server.blockManager.QueueTx(btcutil.NewTx(msg), sp)
 }
 
 // OnHeaders is invoked when a peer receives a headers bitcoin
@@ -597,6 +618,13 @@ type Config struct {
 	//    not, replies with a getdata message.
 	// 3. Neutrino sends the raw transaction.
 	BroadcastTimeout time.Duration
+
+	// BlocksOnly sets whether or not to download unconfirmed transactions
+	// off the wire. If true the ChainService will send notifications when an
+	// unconfirmed transaction matches a watching address. The trade-off here is
+	// you're going to use a lot more bandwidth but it may be acceptable for apps
+	// which only run for brief periods of time.
+	BlocksOnly bool
 }
 
 // peerSubscription holds a peer subscription which we'll notify about any
@@ -661,6 +689,10 @@ type ChainService struct {
 	dialer       func(net.Addr) (net.Conn, error)
 
 	broadcastTimeout time.Duration
+
+	blocksOnly bool
+
+	mempool *Mempool
 }
 
 // NewChainService returns a new chain service configured to connect to the
@@ -720,6 +752,8 @@ func NewChainService(cfg Config) (*ChainService, error) {
 		dialer:            dialer,
 		persistToDisk:     cfg.PersistToDisk,
 		broadcastTimeout:  cfg.BroadcastTimeout,
+		blocksOnly:          cfg.BlocksOnly,
+		mempool:             NewMempool(),
 	}
 	s.workManager = query.New(&query.Config{
 		ConnectedPeers: s.ConnectedPeers,
@@ -962,6 +996,18 @@ func NewChainService(cfg Config) (*ChainService, error) {
 	}
 
 	return &s, nil
+}
+
+// RegisterMempoolCallback registers a callback to be fired whenever a new transaction is
+// received into the mempool
+func (s *ChainService) RegisterMempoolCallback(onRecvTx func(tx *btcutil.Tx, block *btcjson.BlockDetails)) {
+	s.mempool.RegisterCallback(onRecvTx)
+}
+
+// NotifyMempoolReceived registers addresses to receive a callback on when a transaction
+// paying to them enters the mempool.
+func (s *ChainService) NotifyMempoolReceived(addrs []btcutil.Address) {
+	s.mempool.NotifyReceived(addrs)
 }
 
 // BestBlock retrieves the most recent block's height and hash where we
@@ -1222,6 +1268,18 @@ func (s *ChainService) addrStringToNetAddr(addr string) (net.Addr, error) {
 	}, nil
 }
 
+// EnableTxDownload will turn on downloading unconfirmed transactions
+// when called.
+func (s *ChainService) EnableTxDownload() {
+	s.blockManager.peerChan <- enableTxDownloadMsg{}
+}
+
+// DisableTxDownload will turn off downloading unconfirmed transactions
+// when called.
+func (s *ChainService) DisableTxDownload() {
+	s.blockManager.peerChan <- disableTxDownloadMsg{}
+}
+
 // handleUpdatePeerHeight updates the heights of all peers who were known to
 // announce a block we recently accepted.
 func (s *ChainService) handleUpdatePeerHeights(state *peerState, umsg updatePeerHeightsMsg) {
@@ -1452,6 +1510,7 @@ func newPeerConfig(sp *ServerPeer) *peer.Config {
 			OnAddr:      sp.OnAddr,
 			OnRead:      sp.OnRead,
 			OnWrite:     sp.OnWrite,
+			OnTx:        sp.OnTx,
 
 			// Note: The reference client currently bans peers that send alerts
 			// not signed with its key.  We could verify against their key, but
