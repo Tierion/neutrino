@@ -2061,7 +2061,7 @@ func (b *blockManager) handleTxMsg(tmsg *txMsg) {
 		log.Warnf("Peer %s sent us a transaction we didn't request", tmsg.peer.Addr())
 		return
 	}
-	b.syncPeer.server.mempool.AddTransaction(tmsg.tx)
+	b.syncPeer.server.Mempool.AddTransaction(tmsg.tx)
 	delete(b.requestedTxns, *txHash)
 }
 
@@ -2361,7 +2361,7 @@ func (b *blockManager) handleInvMsg(imsg *invMsg) {
 		gdmsg := wire.NewMsgGetData()
 		for _, iv := range invVects {
 			if iv.Type == wire.InvTypeTx {
-				if b.syncPeer.server.mempool.HaveTransaction(&iv.Hash) {
+				if b.syncPeer.server.Mempool.HaveTransaction(&iv.Hash) {
 					continue
 				}
 				if _, exists := b.requestedTxns[iv.Hash]; !exists {
@@ -2810,7 +2810,7 @@ func (b *blockManager) handleHeadersMsg(hmsg *headersMsg) {
 	b.headerTipHash = *finalHash
 	b.newHeadersMtx.Unlock()
 	b.newHeadersSignal.Broadcast()
-	b.syncPeer.server.mempool.Clear()
+	b.syncPeer.server.Mempool.Clear()
 }
 
 // checkHeaderSanity checks the PoW, and timestamp of a block header.

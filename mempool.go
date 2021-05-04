@@ -18,7 +18,7 @@ type Mempool struct {
 	watchedAddrs  []btcutil.Address
 }
 
-// NewMempool returns an initialized mempool
+// NewMempool returns an initialized Mempool
 func NewMempool() *Mempool {
 	return &Mempool{
 		downloadedTxs: make(map[chainhash.Hash]bool),
@@ -27,7 +27,7 @@ func NewMempool() *Mempool {
 }
 
 // RegisterCallback will register a callback that will fire when a transaction
-// matching a watched address enters the mempool.
+// matching a watched address enters the Mempool.
 func (mp *Mempool) RegisterCallback(onRecvTx func(tx *btcutil.Tx, block *btcjson.BlockDetails)) {
 	mp.mtx.Lock()
 	defer mp.mtx.Unlock()
@@ -35,14 +35,14 @@ func (mp *Mempool) RegisterCallback(onRecvTx func(tx *btcutil.Tx, block *btcjson
 }
 
 // HaveTransaction returns whether or not the passed transaction already exists
-// in the mempool.
+// in the Mempool.
 func (mp *Mempool) HaveTransaction(hash *chainhash.Hash) bool {
 	mp.mtx.RLock()
 	defer mp.mtx.RUnlock()
 	return mp.downloadedTxs[*hash]
 }
 
-// AddTransaction adds a new transaction to the mempool and
+// AddTransaction adds a new transaction to the Mempool and
 // maybe calls back if it matches any watched addresses.
 func (mp *Mempool) AddTransaction(tx *btcutil.Tx) {
 	mp.mtx.Lock()
@@ -58,7 +58,7 @@ func (mp *Mempool) AddTransaction(tx *btcutil.Tx) {
 	}
 }
 
-// Clear will remove all transactions from the mempool. This
+// Clear will remove all transactions from the Mempool. This
 // should be done whenever a new block is accepted.
 func (mp *Mempool) Clear() {
 	mp.mtx.Lock()

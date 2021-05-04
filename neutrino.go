@@ -692,7 +692,7 @@ type ChainService struct {
 
 	blocksOnly bool
 
-	mempool *Mempool
+	Mempool *Mempool
 }
 
 // NewChainService returns a new chain service configured to connect to the
@@ -752,8 +752,8 @@ func NewChainService(cfg Config) (*ChainService, error) {
 		dialer:            dialer,
 		persistToDisk:     cfg.PersistToDisk,
 		broadcastTimeout:  cfg.BroadcastTimeout,
-		blocksOnly:          cfg.BlocksOnly,
-		mempool:             NewMempool(),
+		blocksOnly:        cfg.BlocksOnly,
+		Mempool:           NewMempool(),
 	}
 	s.workManager = query.New(&query.Config{
 		ConnectedPeers: s.ConnectedPeers,
@@ -999,15 +999,15 @@ func NewChainService(cfg Config) (*ChainService, error) {
 }
 
 // RegisterMempoolCallback registers a callback to be fired whenever a new transaction is
-// received into the mempool
+// received into the Mempool
 func (s *ChainService) RegisterMempoolCallback(onRecvTx func(tx *btcutil.Tx, block *btcjson.BlockDetails)) {
-	s.mempool.RegisterCallback(onRecvTx)
+	s.Mempool.RegisterCallback(onRecvTx)
 }
 
 // NotifyMempoolReceived registers addresses to receive a callback on when a transaction
-// paying to them enters the mempool.
+// paying to them enters the Mempool.
 func (s *ChainService) NotifyMempoolReceived(addrs []btcutil.Address) {
-	s.mempool.NotifyReceived(addrs)
+	s.Mempool.NotifyReceived(addrs)
 }
 
 // BestBlock retrieves the most recent block's height and hash where we
@@ -1489,7 +1489,7 @@ func disconnectPeer(peerList map[int32]*ServerPeer,
 
 // SendTransaction broadcasts the transaction to all currently active peers so
 // it can be propagated to other nodes and eventually mined. An error won't be
-// returned if the transaction already exists within the mempool. Any
+// returned if the transaction already exists within the Mempool. Any
 // transaction broadcast through this method will be rebroadcast upon every
 // change of the tip of the chain.
 func (s *ChainService) SendTransaction(tx *wire.MsgTx) error {
