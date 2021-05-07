@@ -1046,6 +1046,85 @@ func (s *ChainService) GetBlock(blockHash chainhash.Hash,
 	return foundBlock, nil
 }
 
+// GetTx gets a block by requesting it from the network, one peer at a
+// time, until one answers. If the block is found in the cache, it will be
+// returned immediately.
+func (s *ChainService) GetWitnessTx(txHash chainhash.Hash,
+	options ...QueryOption) (*btcutil.Tx, error) {
+
+	// Starting with the set of default options, we'll apply any specified
+	// functional options to the query so that we can check what inv type
+	// to use.
+	qo := defaultQueryOptions()
+	qo.applyQueryOptions(options...)
+	invType := wire.InvTypeWitnessTx
+	if qo.encoding == wire.BaseEncoding {
+		invType = wire.InvTypeTx
+	}
+
+	// Create an inv vector for getting this tx.
+	inv := wire.NewInvVect(invType, &txHash)
+
+	// Construct the appropriate getdata message to fetch the target tx.
+	getData := wire.NewMsgGetData()
+	getData.AddInvVect(inv)
+
+	// The tx is only updated from the checkResponse function argument,
+	// which is always called single-threadedly. We don't check the tx
+	// until after the query is finished, so we can just write to it
+	// naively.
+	var foundTx *btcutil.Tx
+	s.queryPeers(
+		// Send a wire.GetDataMsg
+		getData,
+
+		// Check responses and if we get one that matches, end the
+		// query early.
+		func(sp *ServerPeer, resp wire.Message,
+			quit chan<- struct{}) {
+			switch response := resp.(type) {
+			// We're only interested in "tx" messages.
+			case *wire.MsgTx:
+				// Only keep this going if we haven't already
+				// found a tx, or we risk closing an already
+				// closed channel.
+				if foundTx != nil {
+					return
+				}
+
+				// If this isn't our tx, ignore it.
+				if response.TxHash() != txHash {
+					return
+				}
+				tx := btcutil.NewTx(response)
+
+				// If this claims our tx but doesn't pass
+				// the sanity check, the peer is trying to
+				// bamboozle us. Disconnect it.
+				if err := blockchain.CheckTransactionSanity(tx); err != nil {
+					log.Warnf("Invalid tx for %s "+
+						"received from %s -- "+
+						"disconnecting peer", txHash,
+						txHash)
+					sp.Disconnect()
+					return
+				}
+
+				foundTx = tx
+				close(quit)
+			default:
+			}
+		},
+		options...,
+	)
+	if foundTx == nil {
+		return nil, fmt.Errorf("Couldn't retrieve tx %s from "+
+			"network", txHash)
+	}
+
+	return foundTx, nil
+}
+
 // sendTransaction sends a transaction to all peers. It returns an error if any
 // peer rejects the transaction.
 //
