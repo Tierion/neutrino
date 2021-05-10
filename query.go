@@ -1056,6 +1056,7 @@ func (s *ChainService) GetWitnessTx(txHash chainhash.Hash,
 	// functional options to the query so that we can check what inv type
 	// to use.
 	qo := defaultQueryOptions()
+	qo.numRetries = 1
 	qo.applyQueryOptions(options...)
 	invType := wire.InvTypeWitnessTx
 	if qo.encoding == wire.BaseEncoding {
@@ -1119,7 +1120,7 @@ func (s *ChainService) GetWitnessTx(txHash chainhash.Hash,
 	)
 	if foundTx == nil {
 		return nil, fmt.Errorf("Couldn't retrieve tx %s from "+
-			"network", txHash)
+			"network", txHash.String())
 	}
 
 	return foundTx, nil
